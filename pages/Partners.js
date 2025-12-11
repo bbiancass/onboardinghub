@@ -1,6 +1,7 @@
 // pages/Partners.js
 
 import { collection, query, where, getDocs, addDoc, serverTimestamp, doc, getDoc, updateDoc } from "firebase/firestore";
+import { getNextStage, getFirstStage, getStages, loadOnboardingStages } from "../constants/onboardingStages.js";
 
 /**
  * Renders the Partners page content, filtering data based on the user's role.
@@ -42,9 +43,16 @@ export async function renderPartnersPage(contentRoot, db, userRole, partnerId) {
             partners.push({ id: doc.id, ...doc.data() });
         });
 
-        const stages = Array.from(
+        // Load predefined stages from Firestore
+        const predefinedStages = await loadOnboardingStages(db);
+        
+        // Also get unique stages from partners (for backward compatibility)
+        const partnerStages = Array.from(
             new Set(partners.map((partner) => partner.onboardingStatus).filter(Boolean))
         );
+        
+        // Combine predefined stages with any additional stages found in partners
+        const stages = Array.from(new Set([...predefinedStages, ...partnerStages]));
         const psms = Array.from(
             new Set(partners.map((partner) => partner.psm).filter(Boolean))
         );
@@ -142,7 +150,11 @@ export async function renderPartnersPage(contentRoot, db, userRole, partnerId) {
                                 </label>
                                 <label>
                                     <span>Onboarding Stage</span>
-                                    <input type="text" name="onboardingStatus" placeholder="e.g., Intake, Testing" required />
+                                    <select name="onboardingStatus" required>
+                                        ${predefinedStages.map((stage) => 
+                                            `<option value="${stage}" ${stage === getFirstStage(predefinedStages) ? 'selected' : ''}>${stage}</option>`
+                                        ).join('')}
+                                    </select>
                                 </label>
                                 <label>
                                     <span>PSM</span>
@@ -256,12 +268,13 @@ export async function renderPartnersPage(contentRoot, db, userRole, partnerId) {
             const newPartner = {
                 name: formData.get('partnerName')?.toString().trim(),
                 partnerId: formData.get('partnerId')?.toString().trim(),
-                onboardingStatus: formData.get('onboardingStatus')?.toString().trim(),
+                onboardingStatus: formData.get('onboardingStatus')?.toString().trim() || getFirstStage(),
                 psm: formData.get('psm')?.toString().trim() || null,
                 integrationType: formData.get('integrationType')?.toString().trim() || null,
                 contactEmail: formData.get('contactEmail')?.toString().trim() || null,
                 notes: formData.get('notes')?.toString().trim() || '',
                 createdAt: serverTimestamp(),
+                stageSince: serverTimestamp(),
                 lastUpdated: serverTimestamp(),
             };
 
@@ -355,6 +368,11 @@ export async function renderPartnerDetailPage(contentRoot, db, partnerDocId, use
         const partnerName = partner.name || 'Untitled Partner';
         const addedDate = formatDate(partner.createdAt);
         const stageSinceDate = formatDate(partner.stageSince || partner.createdAt);
+        
+        // Load stages and calculate the next stage based on current stage
+        const stages = await loadOnboardingStages(db);
+        const currentStage = partner.onboardingStatus || null;
+        const calculatedNextStage = getNextStage(currentStage, stages);
 
         // Mock data for CS Guide Status - in real app, this would come from Firestore
         const defaultCsGuideStatus = [
@@ -424,10 +442,10 @@ export async function renderPartnerDetailPage(contentRoot, db, partnerDocId, use
                         <div class="stage-content">
                             <p class="stage-name">${partner.onboardingStatus || 'N/A'}</p>
                             <p class="stage-meta">On this stage since: ${stageSinceDate}</p>
-                            <p class="stage-meta">Next stage: ${partner.nextStage || 'TBD'}</p>
+                            <p class="stage-meta">Next stage: ${calculatedNextStage || 'Complete'}</p>
                             <div class="stage-actions">
                                 <a href="#" class="see-notes-link">See notes</a>
-                                <button class="next-stage-btn">NEXT STAGE</button>
+                                <button class="next-stage-btn" ${calculatedNextStage ? '' : 'disabled style="opacity: 0.5; cursor: not-allowed;"'}>NEXT STAGE</button>
                             </div>
                         </div>
                     </div>
@@ -488,7 +506,11 @@ export async function renderPartnerDetailPage(contentRoot, db, partnerDocId, use
                                 </label>
                                 <label>
                                     <span>Onboarding Stage</span>
-                                    <input type="text" name="onboardingStatus" value="${escapeHtml(partner.onboardingStatus)}" required />
+                                    <select name="onboardingStatus" required>
+                                        ${stages.map((stage) => 
+                                            `<option value="${stage}" ${stage === partner.onboardingStatus ? 'selected' : ''}>${stage}</option>`
+                                        ).join('')}
+                                    </select>
                                 </label>
                                 <label>
                                     <span>PSM</span>
@@ -606,6 +628,38 @@ export async function renderPartnerDetailPage(contentRoot, db, partnerDocId, use
                 }
             });
         });
+
+        // Next Stage button click handler
+        const nextStageBtn = contentRoot.querySelector('.next-stage-btn');
+        if (nextStageBtn && calculatedNextStage) {
+            nextStageBtn.addEventListener('click', async () => {
+                if (!calculatedNextStage) {
+                    alert('Partner is already at the final stage.');
+                    return;
+                }
+
+                // Confirm the action
+                const confirmed = confirm(`Move partner to "${calculatedNextStage}" stage?`);
+                if (!confirmed) {
+                    return;
+                }
+
+                try {
+                    // Update the partner's onboarding status to the next stage
+                    await updateDoc(partnerDocRef, {
+                        onboardingStatus: calculatedNextStage,
+                        stageSince: serverTimestamp(),
+                        lastUpdated: serverTimestamp(),
+                    });
+
+                    // Reload the page to show updated stage
+                    renderPartnerDetailPage(contentRoot, db, partnerDocId, userRole);
+                } catch (error) {
+                    console.error('Error updating partner stage:', error);
+                    alert('Could not update stage. Please try again.');
+                }
+            });
+        }
 
     } catch (error) {
         console.error("Error fetching partner details:", error);

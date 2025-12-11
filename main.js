@@ -1,7 +1,7 @@
 // main.js
 
 // --- 1. Imports ---
-import { app, auth, db } from './firebase-init.js'; 
+import { app, auth, db, storage } from './firebase-init.js'; 
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore"; 
 
@@ -10,7 +10,7 @@ import { renderLoginPage } from './pages/Login.js';
 import { renderPartnersPage, renderPartnerDetailPage } from './pages/Partners.js'; 
 import { renderDocumentsPage } from './pages/Documents.js';
 import { renderTemplatesPage } from './pages/Templates.js';
-// import { renderSettingsPage } from './pages/Settings.js';
+import { renderSettingsPage } from './pages/Settings.js';
 
 
 // --- 2. Layout Structure ---
@@ -70,7 +70,7 @@ function createLayout() {
 // --- 3. Routing Logic ---
 
 // The main function that decides which page to display
-function renderRoute(path, contentRoot, userRole, partnerId) {
+async function renderRoute(path, contentRoot, userRole, partnerId) {
     const normalizedPath = normalizePath(path);
     highlightActiveNav(normalizedPath);
 
@@ -81,7 +81,7 @@ function renderRoute(path, contentRoot, userRole, partnerId) {
     const partnerDetailMatch = path.match(/^\/partners\/([^/]+)$/);
     if (partnerDetailMatch) {
         const partnerDocId = partnerDetailMatch[1];
-        renderPartnerDetailPage(contentRoot, db, partnerDocId, userRole);
+        await renderPartnerDetailPage(contentRoot, db, partnerDocId, userRole);
         return;
     }
     
@@ -89,17 +89,16 @@ function renderRoute(path, contentRoot, userRole, partnerId) {
     switch (normalizedPath) {
         case '/partners': // Making /partners the default home view for now
             // Pass the Firestore instance and user info to the page component
-            renderPartnersPage(contentRoot, db, userRole, partnerId); 
+            await renderPartnersPage(contentRoot, db, userRole, partnerId); 
             break;
         case '/documents':
-            renderDocumentsPage(contentRoot, db, userRole, partnerId);
+            await renderDocumentsPage(contentRoot, db, storage, userRole, partnerId);
             break;
         case '/templates':
-            renderTemplatesPage(contentRoot, db, userRole, partnerId);
+            await renderTemplatesPage(contentRoot, db, userRole, partnerId);
             break;
         case '/settings':
-            // renderSettingsPage(contentRoot, db, userRole, partnerId);
-            contentRoot.innerHTML = '<h1>Account Settings</h1><p>Settings page for role: ' + userRole + '</p>';
+            await renderSettingsPage(contentRoot, db, userRole);
             break;
         default:
             contentRoot.innerHTML = '<h1>404 | Not Found</h1>';
@@ -110,7 +109,7 @@ function renderRoute(path, contentRoot, userRole, partnerId) {
 function handleNavigation(contentRoot, userRole, partnerId) {
     // Attach event listeners to all navigation links using the data-route attribute
     document.querySelectorAll('[data-route]').forEach(link => {
-        link.addEventListener('click', (e) => {
+        link.addEventListener('click', async (e) => {
             e.preventDefault();
             const path = e.currentTarget.getAttribute('data-route');
             
@@ -118,13 +117,13 @@ function handleNavigation(contentRoot, userRole, partnerId) {
             window.history.pushState({}, path, window.location.origin + path); 
             
             // 2. Render the new page content
-            renderRoute(path, contentRoot, userRole, partnerId);
+            await renderRoute(path, contentRoot, userRole, partnerId);
         });
     });
     
     // Listen for browser back/forward buttons
-    window.addEventListener('popstate', () => {
-        renderRoute(window.location.pathname, contentRoot, userRole, partnerId);
+    window.addEventListener('popstate', async () => {
+        await renderRoute(window.location.pathname, contentRoot, userRole, partnerId);
     });
     
     // Render the initial route when the app starts
